@@ -2,7 +2,7 @@ import sys
 import os
 import time
 import threading
-import utilities
+
 
 #*******import the library require for Read_CSV function*******
 import csv
@@ -209,7 +209,6 @@ def read_csv(filename, angle, position, orientation, gripper_position, translati
     """
     with open(filename, newline='', mode='r') as file:
         reader = csv.reader(file)
-        next(reader)  # Skip the header row if there is one
         for lines in reader:
             #Assuming the csv columns are in the order of angle1, angle2, angle3, angle4, angle5, angle6, 
             # posX, posY, posZ, oriX, oriY, oriZ, gripPos, speed, action
@@ -221,6 +220,7 @@ def read_csv(filename, angle, position, orientation, gripper_position, translati
                 action_type = row[4].strip()  # 5th column = action ID
                 action_id.append(int(action_type))
 
+                #THESE ARE GOOD
                 if action_type == "6":  # Cartesian Pose
                     pos = [float(row[27]), float(row[28]), float(row[29])]   # X,Y,Z (cols 28-30)
                     ori = [float(row[30]), float(row[31]), float(row[32])]   # θX,θY,θZ (cols 31-33)
@@ -230,9 +230,10 @@ def read_csv(filename, angle, position, orientation, gripper_position, translati
                     orientation.append(ori)
                     translation_speed.append(spd)
 
+                #
                 elif action_type == "7":  # Angular Motion
-                    # Joint angles in columns 6-12 (0-based: 5-11)
-                    joints = [float(row[i]) for i in range(5, 12)]
+                    # Joint angles in columns 6-20 (0-based: 5-19, step by 2 as there identifiers are in between)
+                    joints = [float(row[i]) for i in range(5, 19, 2)]
                     angle.append(joints)
 
                 elif action_type == "33":  # Finger Position
@@ -240,63 +241,104 @@ def read_csv(filename, angle, position, orientation, gripper_position, translati
                     gripper_position.append(grip)
 
     return angle, position, orientation, gripper_position, translation_speed, action_id
-
-
 #*******Function end here*******
+
+def pretty_print_2d(label, array):
+    print(f"\n{label}:")
+    for i, subarray in enumerate(array):
+        print(f"  [{i}] {subarray}")
 
 def main():
     
     # Import the utilities helper module
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    import utilities
 
     # Parse arguments
     args = utilities.parseConnectionArguments()
     
     # Create connection to the device and get the router
+    #with utilities.DeviceConnection.createTcpConnection(args) as router:
+    angle=[]
+    position=[]
+    orientation=[]
+    gripper_position=[]
+    translation_speed=[]
+    action_sequence=[]
+    
+    #*******Add the other require variable below******* 
+    
+    #*******Add the address of the CSV below*******
+    Filename = './Practice.csv'
+    
+    # Create required services
+    # base = BaseClient(router)
+    # base_cyclic = BaseCyclicClient(router)
+    #gripper services
+    # Create the GripperCommand we will send
+    gripper_command = Base_pb2.GripperCommand()
+    gripper_command.mode = Base_pb2.GRIPPER_POSITION
+    finger = gripper_command.gripper.finger.add()
+    finger.finger_identifier = 1
+    
+    #read the marker placing csv file
+    read_csv(Filename, angle, position, orientation, gripper_position, 
+                translation_speed, action_sequence)
+    
+    print("CSV file read completed")
+    print(f"Number of actions to execute: {len(action_sequence)}")
+    print("Action sequence:", action_sequence)
+    pretty_print_2d("Angle data:", angle)
+    print("Position data:", position)
+    print("Orientation data:", orientation)
+    print("Gripper position data:", gripper_position)
+    print("Translation speed data:", translation_speed)
+    print("Starting the action sequence...")
+    success=True
+    
+    #*******Write the loop that perform the action*******
+    #*******start here*******
+    #use the variable "success" to know that all the action are perform
     with utilities.DeviceConnection.createTcpConnection(args) as router:
-        angle=[]
-        position=[]
-        orientation=[]
-        gripper_position=[]
-        translation_speed=[]
-        action_sequence=[]
-        
-        #*******Add the other require variable below******* 
-        
-        #*******Add the address of the CSV below*******
-        Filename = './Practice.csv'
-        
-        # Create required services
         base = BaseClient(router)
         base_cyclic = BaseCyclicClient(router)
-        #gripper services
-        # Create the GripperCommand we will send
-        gripper_command = Base_pb2.GripperCommand()
-        gripper_command.mode = Base_pb2.GRIPPER_POSITION
-        finger = gripper_command.gripper.finger.add()
-        finger.finger_identifier = 1
         
-        #read the marker placing csv file
-        read_csv(Filename, angle, position, orientation, gripper_position, 
-                 translation_speed, action_sequence)
+        #move to zero position
+        success=move_to_zero_position(base)
         
-        print("CSV file read completed")
-        print(f"Number of actions to execute: {len(action_sequence)}")
-        print("Action sequence:", action_sequence)
-        print("Angle data:", angle)
-        print("Position data:", position)
-        print("Orientation data:", orientation)
-        print("Gripper position data:", gripper_position)
-        print("Translation speed data:", translation_speed)
-        print("Starting the action sequence...")
-        success=True
+        if not success:
+            print("Failed to move to zero position. Exiting.")
+            return 1
         
-        #*******Write the loop that perform the action*******
-        #*******start here*******
-        #use the variable "success" to know that all the action are perform
-	
-        #*******end the loop here*******
-        return 0 if success else 1
+        for i, action_type in enumerate(action_sequence):
+            if action_type == 6:  # Cartesian Pose
+                pos = position.pop(0)
+                ori = orientation.pop(0)
+                spd = translation_speed.pop(0)
+                print(f"\nExecuting Cartesian action {i+1} with position {pos}, orientation {ori}, speed {spd}")
+                success = cartesian_action_movement(base, pos, ori, spd)
+            
+            elif action_type == 7:  # Angular Motion
+                joints = angle.pop(0)
+                print(f"\nExecuting Angular action {i+1} with joint angles {joints}")
+                success = angular_action_movement(base, joints)
+            
+            elif action_type == 33:  # Finger Position
+                grip = gripper_position.pop(0)
+                print(f"\nExecuting Gripper action {i+1} with finger position {grip}")
+                finger.value = grip
+                base.SendGripperCommand(gripper_command)
+                time.sleep(2)  # wait for the gripper to move
+            
+            else:
+                print(f"\nUnknown action type {action_type} at action {i+1}. Skipping.")
+                continue
+            
+            if not success:
+                print(f"Action {i+1} failed. Exiting sequence.")
+                break
+    #*******end the loop here*******
+    return 0 if success else 1
         
 if __name__ == "__main__":
     exit(main())
