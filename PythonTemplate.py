@@ -2,9 +2,11 @@ import sys
 import os
 import time
 import threading
+import utilities
 
 #*******import the library require for Read_CSV function*******
-
+import csv
+#*******End here*******
 
 from kortex_api.autogen.client_stubs.BaseClientRpc import BaseClient
 from kortex_api.autogen.client_stubs.BaseCyclicClientRpc import BaseCyclicClient
@@ -70,13 +72,41 @@ def move_to_home_position(base):
 #*******Use the move_to_home_position function to write move_to_zero_position or move_to_retract_position*******
 #*******Start here*******
 
+def move_to_zero_position(base):
+    # Make sure the arm is in Single Level Servoing mode
+    base_servo_mode = Base_pb2.ServoingModeInformation()
+    base_servo_mode.servoing_mode = Base_pb2.SINGLE_LEVEL_SERVOING
+    base.SetServoingMode(base_servo_mode)
+    
+    # Move arm to ready position
+    print("Moving the arm to zero position")
+    action_type = Base_pb2.RequestedActionType()
+    action_type.action_type = Base_pb2.REACH_JOINT_ANGLES
+    action_list = base.ReadAllActions(action_type)
+    action_handle = None
+    for action in action_list.action_list:
+        if action.name == "Zero":
+            action_handle = action.handle
 
+    if action_handle == None:
+        print("Can't reach zero position. Exiting")
+        return False
 
+    e = threading.Event()
+    notification_handle = base.OnNotificationActionTopic(
+        check_for_end_or_abort(e),
+        Base_pb2.NotificationOptions()
+    )
 
+    base.ExecuteActionFromReference(action_handle)
+    finished = e.wait(TIMEOUT_DURATION)
+    base.Unsubscribe(notification_handle)
 
-
-
-
+    if finished:
+        print("Zero position reached")
+    else:
+        print("Timeout on action notification wait")
+    return finished
 #*******Function end here*******
 
 def angular_action_movement(base,angles):
@@ -156,10 +186,60 @@ def cartesian_action_movement(base, position,orientation,velocity):
 #*******Write the Read_CSV function*******
 #*******Start here*******
 
+def read_csv(filename, angle, position, orientation, gripper_position, translation_speed, action_id):
+    """
+    Reads a Kinova Gen3 action CSV file and extracts required information.
 
+    Parameters
+    ----------
+    filename : str
+        Path to the CSV file
+    angle : list (2D)
+        Joint angles (angular motion)
+    position : list (2D)
+        Cartesian positions (x,y,z for pose)
+    orientation : list (2D)
+        Cartesian orientation (thetaX, thetaY, thetaZ)
+    gripper_position : list
+        Finger positions
+    translation_speed : list
+        Pose translation speed constraints
+    action_sequence : list
+        Action ID (6=pose, 7=angular, 33=finger)
+    """
+    with open(filename, newline='', mode='r') as file:
+        reader = csv.reader(file)
+        next(reader)  # Skip the header row if there is one
+        for lines in reader:
+            #Assuming the csv columns are in the order of angle1, angle2, angle3, angle4, angle5, angle6, 
+            # posX, posY, posZ, oriX, oriY, oriZ, gripPos, speed, action
 
+            for row in reader:
+                if not row:  # skip empty rows
+                    continue
 
+                action_type = row[4].strip()  # 5th column = action ID
+                action_id.append(int(action_type))
 
+                if action_type == "6":  # Cartesian Pose
+                    pos = [float(row[27]), float(row[28]), float(row[29])]   # X,Y,Z (cols 28-30)
+                    ori = [float(row[30]), float(row[31]), float(row[32])]   # θX,θY,θZ (cols 31-33)
+                    spd = float(row[33]) if row[33] else 0.0                 # Speed (col 34)
+
+                    position.append(pos)
+                    orientation.append(ori)
+                    translation_speed.append(spd)
+
+                elif action_type == "7":  # Angular Motion
+                    # Joint angles in columns 6-12 (0-based: 5-11)
+                    joints = [float(row[i]) for i in range(5, 12)]
+                    angle.append(joints)
+
+                elif action_type == "33":  # Finger Position
+                    grip = float(row[24]) if row[24] else 0.0  # col 25
+                    gripper_position.append(grip)
+
+    return angle, position, orientation, gripper_position, translation_speed, action_id
 
 
 #*******Function end here*******
@@ -168,7 +248,6 @@ def main():
     
     # Import the utilities helper module
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import utilities
 
     # Parse arguments
     args = utilities.parseConnectionArguments()
@@ -185,7 +264,7 @@ def main():
         #*******Add the other require variable below******* 
         
         #*******Add the address of the CSV below*******
-        Filename = 'Address of the CSV file'
+        Filename = './Practice.csv'
         
         # Create required services
         base = BaseClient(router)
@@ -198,19 +277,23 @@ def main():
         finger.finger_identifier = 1
         
         #read the marker placing csv file
-        read_csv(Filename, angle,position,orientation,gripper_position,translation_speed,action_sequence)
+        read_csv(Filename, angle, position, orientation, gripper_position, 
+                 translation_speed, action_sequence)
         
+        print("CSV file read completed")
+        print(f"Number of actions to execute: {len(action_sequence)}")
+        print("Action sequence:", action_sequence)
+        print("Angle data:", angle)
+        print("Position data:", position)
+        print("Orientation data:", orientation)
+        print("Gripper position data:", gripper_position)
+        print("Translation speed data:", translation_speed)
+        print("Starting the action sequence...")
         success=True
         
         #*******Write the loop that perform the action*******
         #*******start here*******
         #use the variable "success" to know that all the action are perform
-	
-	
-	
-	
-	
-	
 	
         #*******end the loop here*******
         return 0 if success else 1
