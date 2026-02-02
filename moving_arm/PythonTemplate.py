@@ -31,7 +31,7 @@ def check_for_end_or_abort(e):
         or notification.action_event == Base_pb2.ACTION_ABORT:
             e.set()
     return check
-""" 
+
 def move_to_home_position(base):
     # Make sure the arm is in Single Level Servoing mode
     base_servo_mode = Base_pb2.ServoingModeInformation()
@@ -67,7 +67,7 @@ def move_to_home_position(base):
     else:
         print("Timeout on action notification wait")
     return finished
-"""
+
 #*******Write the function called move_to_zero_position or move_to_retract_position depending on your UCID*******
 #*******Use the move_to_home_position function to write move_to_zero_position or move_to_retract_position*******
 #*******Start here*******
